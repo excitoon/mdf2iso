@@ -1,0 +1,60 @@
+﻿#!/usr/bin/env python3
+
+import argparse
+import os
+
+
+parser = argparse.ArgumentParser()
+parser.add_argument('path', type=str, help='path to process')
+args = parser.parse_args()
+
+assert os.path.isfile(args.path)
+output_path = '{}.iso'.format(os.path.splitext(args.path)[0])
+assert not os.path.isfile(output_path)
+
+def looks_like_header(header):
+    good_header = b'\x00\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\x00'
+    if header == good_header:
+        return True
+    elif len(header) != 12:
+        return False
+    else:
+        score = 0
+        for l, r in zip(header, good_header):
+            score += abs(l-r)
+        return score < 500
+
+def get_offset(path, input_block_size, output_block_size):
+    with open(args.path, 'rb') as mdf:
+        bytes = mdf.read((0x8000 + output_block_size) * input_block_size // output_block_size)
+        last_block = bytes[-input_block_size:]
+        return last_block.index(b'\x01\x43\x44\x30\x30\x31\x01\x00')
+
+size = os.path.getsize(args.path)
+input_block_size = 2352
+output_block_size = 2048
+assert input_block_size % input_block_size == 0
+blocks = size // input_block_size
+
+offset = get_offset(args.path, input_block_size, output_block_size)
+
+try:
+    import progress.bar
+    bar = progress.bar.ShadyBar('Exporting', max=blocks*output_block_size)
+except:
+    bar = None
+
+with open(args.path, 'rb') as mdf:
+    with open(output_path, 'wb') as iso:
+        for i in range(0, blocks):
+            bytes = mdf.read(input_block_size)
+            if len(bytes) == 0:
+                break
+            assert looks_like_header(bytes[:12]), 'Unknown header {}.'.format(bytes[:12])
+            iso.write(bytes[offset:output_block_size+offset])
+            if not bar is None and i & 0x7ff == 0:
+                bar.next(0x800*output_block_size)
+
+if not bar is None:
+    bar.goto(blocks*output_block_size)
+    bar.finish()
